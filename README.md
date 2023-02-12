@@ -1,8 +1,3 @@
-
-Logo
-
-3.8.16
-
 English
 Table of Contents
 cmd — Support for line-oriented command interpreters
