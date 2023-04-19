@@ -1,8 +1,11 @@
 #!/usr/bin/python3
-""" Class State """
+""" User Class """
 from models.base_model import BaseModel
 
 
-class State(BaseModel):
-    """ State class that inherits BaseModel"""
-    name = ""
+class User(BaseModel):
+    """ User class that inherits BaseModel """
+    email = ""
+    password = ""
+    first_name = ""
+    last_name = ""
