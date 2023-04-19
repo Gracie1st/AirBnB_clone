@@ -1,253 +1,240 @@
-English
-Table of Contents
-cmd — Support for line-oriented command interpreters
-Cmd Objects
-Cmd Example
-Previous topic
-turtle — Turtle graphics
+Object Relational Tutorial
+The SQLAlchemy Object Relational Mapper presents a method of associating user-defined Python classes with database tables, and instances of those classes (objects) with rows in their corresponding tables. It includes a system that transparently synchronizes all changes in state between objects and their related rows, called a unit of work, as well as a system for expressing database queries in terms of the user defined classes and their defined relationships between each other.
 
-Next topic
-shlex — Simple lexical analysis
+The ORM is in contrast to the SQLAlchemy Expression Language, upon which the ORM is constructed. Whereas the SQL Expression Language, introduced in SQL Expression Language Tutorial, presents a system of representing the primitive constructs of the relational database directly without opinion, the ORM presents a high level and abstracted pattern of usage, which itself is an example of applied usage of the Expression Language.
 
-This Page
-Report a Bug
-Show Source
-cmd — Support for line-oriented command interpreters
-Source code: Lib/cmd.py
+While there is overlap among the usage patterns of the ORM and the Expression Language, the similarities are more superficial than they may at first appear. One approaches the structure and content of data from the perspective of a user-defined domain model which is transparently persisted and refreshed from its underlying storage model. The other approaches it from the perspective of literal schema and SQL expression representations which are explicitly composed into messages consumed individually by the database.
 
-The Cmd class provides a simple framework for writing line-oriented command interpreters. These are often useful for test harnesses, administrative tools, and prototypes that will later be wrapped in a more sophisticated interface.
+A successful application may be constructed using the Object Relational Mapper exclusively. In advanced situations, an application constructed with the ORM may make occasional usage of the Expression Language directly in certain areas where specific database interactions are required.
 
-class cmd.Cmd(completekey='tab', stdin=None, stdout=None)
-A Cmd instance or subclass instance is a line-oriented interpreter framework. There is no good reason to instantiate Cmd itself; rather, it’s useful as a superclass of an interpreter class you define yourself in order to inherit Cmd’s methods and encapsulate action methods.
+The following tutorial is in doctest format, meaning each >>> line represents something you can type at a Python command prompt, and the following text represents the expected return value.
 
-The optional argument completekey is the readline name of a completion key; it defaults to Tab. If completekey is not None and readline is available, command completion is done automatically.
+Version Check
+A quick check to verify that we are on at least version 1.3 of SQLAlchemy:
 
-The optional arguments stdin and stdout specify the input and output file objects that the Cmd instance or subclass instance will use for input and output. If not specified, they will default to sys.stdin and sys.stdout.
+>>> import sqlalchemy
+>>> sqlalchemy.__version__ 
+1.3.0
+Connecting
+For this tutorial we will use an in-memory-only SQLite database. To connect we use create_engine():
 
-If you want a given stdin to be used, make sure to set the instance’s use_rawinput attribute to False, otherwise stdin will be ignored.
+>>> from sqlalchemy import create_engine
+>>> engine = create_engine('sqlite:///:memory:', echo=True)
+The echo flag is a shortcut to setting up SQLAlchemy logging, which is accomplished via Python’s standard logging module. With it enabled, we’ll see all the generated SQL produced. If you are working through this tutorial and want less output generated, set it to False. This tutorial will format the SQL behind a popup window so it doesn’t get in our way; just click the “SQL” links to see what’s being generated.
 
-Cmd Objects
-A Cmd instance has the following methods:
+The return value of create_engine() is an instance of Engine, and it represents the core interface to the database, adapted through a dialect that handles the details of the database and DBAPI in use. In this case the SQLite dialect will interpret instructions to the Python built-in sqlite3 module.
 
-Cmd.cmdloop(intro=None)
-Repeatedly issue a prompt, accept input, parse an initial prefix off the received input, and dispatch to action methods, passing them the remainder of the line as argument.
+Lazy Connecting
 
-The optional argument is a banner or intro string to be issued before the first prompt (this overrides the intro class attribute).
+The Engine, when first returned by create_engine(), has not actually tried to connect to the database yet; that happens only the first time it is asked to perform a task against the database.
 
-If the readline module is loaded, input will automatically inherit bash-like history-list editing (e.g. Control-P scrolls back to the last command, Control-N forward to the next one, Control-F moves the cursor to the right non-destructively, Control-B moves the cursor to the left non-destructively, etc.).
+The first time a method like Engine.execute() or Engine.connect() is called, the Engine establishes a real DBAPI connection to the database, which is then used to emit the SQL. When using the ORM, we typically don’t use the Engine directly once created; instead, it’s used behind the scenes by the ORM as we’ll see shortly.
 
-An end-of-file on input is passed back as the string 'EOF'.
+See also
 
-An interpreter instance will recognize a command name foo if and only if it has a method do_foo(). As a special case, a line beginning with the character '?' is dispatched to the method do_help(). As another special case, a line beginning with the character '!' is dispatched to the method do_shell() (if such a method is defined).
+Database Urls - includes examples of create_engine() connecting to several kinds of databases with links to more information.
 
-This method will return when the postcmd() method returns a true value. The stop argument to postcmd() is the return value from the command’s corresponding do_*() method.
+Declare a Mapping
+When using the ORM, the configurational process starts by describing the database tables we’ll be dealing with, and then by defining our own classes which will be mapped to those tables. In modern SQLAlchemy, these two tasks are usually performed together, using a system known as Declarative, which allows us to create classes that include directives to describe the actual database table they will be mapped to.
 
-If completion is enabled, completing commands will be done automatically, and completing of commands args is done by calling complete_foo() with arguments text, line, begidx, and endidx. text is the string prefix we are attempting to match: all returned matches must begin with it. line is the current input line with leading whitespace removed, begidx and endidx are the beginning and ending indexes of the prefix text, which could be used to provide different completion depending upon which position the argument is in.
+Classes mapped using the Declarative system are defined in terms of a base class which maintains a catalog of classes and tables relative to that base - this is known as the declarative base class. Our application will usually have just one instance of this base in a commonly imported module. We create the base class using the declarative_base() function, as follows:
 
-All subclasses of Cmd inherit a predefined do_help(). This method, called with an argument 'bar', invokes the corresponding method help_bar(), and if that is not present, prints the docstring of do_bar(), if available. With no argument, do_help() lists all available help topics (that is, all commands with corresponding help_*() methods or commands that have docstrings), and also lists any undocumented commands.
+>>> from sqlalchemy.ext.declarative import declarative_base
 
-Cmd.onecmd(str)
-Interpret the argument as though it had been typed in response to the prompt. This may be overridden, but should not normally need to be; see the precmd() and postcmd() methods for useful execution hooks. The return value is a flag indicating whether interpretation of commands by the interpreter should stop. If there is a do_*() method for the command str, the return value of that method is returned, otherwise the return value from the default() method is returned.
+>>> Base = declarative_base()
+Now that we have a “base”, we can define any number of mapped classes in terms of it. We will start with just a single table called users, which will store records for the end-users using our application. A new class called User will be the class to which we map this table. Within the class, we define details about the table to which we’ll be mapping, primarily the table name, and names and datatypes of columns:
 
-Cmd.emptyline()
-Method called when an empty line is entered in response to the prompt. If this method is not overridden, it repeats the last nonempty command entered.
+>>> from sqlalchemy import Column, Integer, String
+>>> class User(Base):
+...     __tablename__ = 'users'
+...
+...     id = Column(Integer, primary_key=True)
+...     name = Column(String)
+...     fullname = Column(String)
+...     nickname = Column(String)
+...
+...     def __repr__(self):
+...        return "<User(name='%s', fullname='%s', nickname='%s')>" % (
+...                             self.name, self.fullname, self.nickname)
+Tip
 
-Cmd.default(line)
-Method called on an input line when the command prefix is not recognized. If this method is not overridden, it prints an error message and returns.
+The User class defines a __repr__() method, but note that is optional; we only implement it in this tutorial so that our examples show nicely formatted User objects.
 
-Cmd.completedefault(text, line, begidx, endidx)
-Method called to complete an input line when no command-specific complete_*() method is available. By default, it returns an empty list.
+A class using Declarative at a minimum needs a __tablename__ attribute, and at least one Column which is part of a primary key [1]. SQLAlchemy never makes any assumptions by itself about the table to which a class refers, including that it has no built-in conventions for names, datatypes, or constraints. But this doesn’t mean boilerplate is required; instead, you’re encouraged to create your own automated conventions using helper functions and mixin classes, which is described in detail at Mixin and Custom Base Classes.
 
-Cmd.precmd(line)
-Hook method executed just before the command line line is interpreted, but after the input prompt is generated and issued. This method is a stub in Cmd; it exists to be overridden by subclasses. The return value is used as the command which will be executed by the onecmd() method; the precmd() implementation may re-write the command or simply return line unchanged.
+When our class is constructed, Declarative replaces all the Column objects with special Python accessors known as descriptors; this is a process known as instrumentation. The “instrumented” mapped class will provide us with the means to refer to our table in a SQL context as well as to persist and load the values of columns from the database.
 
-Cmd.postcmd(stop, line)
-Hook method executed just after a command dispatch is finished. This method is a stub in Cmd; it exists to be overridden by subclasses. line is the command line which was executed, and stop is a flag which indicates whether execution will be terminated after the call to postcmd(); this will be the return value of the onecmd() method. The return value of this method will be used as the new value for the internal flag which corresponds to stop; returning false will cause interpretation to continue.
+Outside of what the mapping process does to our class, the class remains otherwise mostly a normal Python class, to which we can define any number of ordinary attributes and methods needed by our application.
 
-Cmd.preloop()
-Hook method executed once when cmdloop() is called. This method is a stub in Cmd; it exists to be overridden by subclasses.
+[1]
+For information on why a primary key is required, see How do I map a table that has no primary key?.
 
-Cmd.postloop()
-Hook method executed once when cmdloop() is about to return. This method is a stub in Cmd; it exists to be overridden by subclasses.
+Create a Schema
+With our User class constructed via the Declarative system, we have defined information about our table, known as table metadata. The object used by SQLAlchemy to represent this information for a specific table is called the Table object, and here Declarative has made one for us. We can see this object by inspecting the __table__ attribute:
 
-Instances of Cmd subclasses have some public instance variables:
+>>> User.__table__ 
+Table('users', MetaData(bind=None),
+            Column('id', Integer(), table=<users>, primary_key=True, nullable=False),
+            Column('name', String(), table=<users>),
+            Column('fullname', String(), table=<users>),
+            Column('nickname', String(), table=<users>), schema=None)
+Classical Mappings
 
-Cmd.prompt
-The prompt issued to solicit input.
+The Declarative system, though highly recommended, is not required in order to use SQLAlchemy’s ORM. Outside of Declarative, any plain Python class can be mapped to any Table using the mapper() function directly; this less common usage is described at Classical Mappings.
 
-Cmd.identchars
-The string of characters accepted for the command prefix.
+When we declared our class, Declarative used a Python metaclass in order to perform additional activities once the class declaration was complete; within this phase, it then created a Table object according to our specifications, and associated it with the class by constructing a Mapper object. This object is a behind-the-scenes object we normally don’t need to deal with directly (though it can provide plenty of information about our mapping when we need it).
 
-Cmd.lastcmd
-The last nonempty command prefix seen.
+The Table object is a member of a larger collection known as MetaData. When using Declarative, this object is available using the .metadata attribute of our declarative base class.
 
-Cmd.cmdqueue
-A list of queued input lines. The cmdqueue list is checked in cmdloop() when new input is needed; if it is nonempty, its elements will be processed in order, as if entered at the prompt.
+The MetaData is a registry which includes the ability to emit a limited set of schema generation commands to the database. As our SQLite database does not actually have a users table present, we can use MetaData to issue CREATE TABLE statements to the database for all tables that don’t yet exist. Below, we call the MetaData.create_all() method, passing in our Engine as a source of database connectivity. We will see that special commands are first emitted to check for the presence of the users table, and following that the actual CREATE TABLE statement:
 
-Cmd.intro
-A string to issue as an intro or banner. May be overridden by giving the cmdloop() method an argument.
+>>> Base.metadata.create_all(engine)
+SELECT ...
+PRAGMA main.table_info("users")
+()
+PRAGMA temp.table_info("users")
+()
+CREATE TABLE users (
+    id INTEGER NOT NULL, name VARCHAR,
+    fullname VARCHAR,
+    nickname VARCHAR,
+    PRIMARY KEY (id)
+)
+()
+COMMIT
+Minimal Table Descriptions vs. Full Descriptions
 
-Cmd.doc_header
-The header to issue if the help output has a section for documented commands.
+Users familiar with the syntax of CREATE TABLE may notice that the VARCHAR columns were generated without a length; on SQLite and PostgreSQL, this is a valid datatype, but on others, it’s not allowed. So if running this tutorial on one of those databases, and you wish to use SQLAlchemy to issue CREATE TABLE, a “length” may be provided to the String type as below:
 
-Cmd.misc_header
-The header to issue if the help output has a section for miscellaneous help topics (that is, there are help_*() methods without corresponding do_*() methods).
+Column(String(50))
+The length field on String, as well as similar precision/scale fields available on Integer, Numeric, etc. are not referenced by SQLAlchemy other than when creating tables.
 
-Cmd.undoc_header
-The header to issue if the help output has a section for undocumented commands (that is, there are do_*() methods without corresponding help_*() methods).
+Additionally, Firebird and Oracle require sequences to generate new primary key identifiers, and SQLAlchemy doesn’t generate or assume these without being instructed. For that, you use the Sequence construct:
 
-Cmd.ruler
-The character used to draw separator lines under the help-message headers. If empty, no ruler line is drawn. It defaults to '='.
+from sqlalchemy import Sequence
+Column(Integer, Sequence('user_id_seq'), primary_key=True)
+A full, foolproof Table generated via our declarative mapping is therefore:
 
-Cmd.use_rawinput
-A flag, defaulting to true. If true, cmdloop() uses input() to display a prompt and read the next command; if false, sys.stdout.write() and sys.stdin.readline() are used. (This means that by importing readline, on systems that support it, the interpreter will automatically support Emacs-like line editing and command-history keystrokes.)
+class User(Base):
+    __tablename__ = 'users'
+    id = Column(Integer, Sequence('user_id_seq'), primary_key=True)
+    name = Column(String(50))
+    fullname = Column(String(50))
+    nickname = Column(String(50))
 
-Cmd Example
-The cmd module is mainly useful for building custom shells that let a user work with a program interactively.
+    def __repr__(self):
+        return "<User(name='%s', fullname='%s', nickname='%s')>" % (
+                                self.name, self.fullname, self.nickname)
+We include this more verbose table definition separately to highlight the difference between a minimal construct geared primarily towards in-Python usage only, versus one that will be used to emit CREATE TABLE statements on a particular set of backends with more stringent requirements.
 
-This section presents a simple example of how to build a shell around a few of the commands in the turtle module.
+Create an Instance of the Mapped Class
+With mappings complete, let’s now create and inspect a User object:
 
-Basic turtle commands such as forward() are added to a Cmd subclass with method named do_forward(). The argument is converted to a number and dispatched to the turtle module. The docstring is used in the help utility provided by the shell.
+>>> ed_user = User(name='ed', fullname='Ed Jones', nickname='edsnickname')
+>>> ed_user.name
+'ed'
+>>> ed_user.nickname
+'edsnickname'
+>>> str(ed_user.id)
+'None'
+the __init__() method
 
-The example also includes a basic record and playback facility implemented with the precmd() method which is responsible for converting the input to lowercase and writing the commands to a file. The do_playback() method reads the file and adds the recorded commands to the cmdqueue for immediate playback:
+Our User class, as defined using the Declarative system, has been provided with a constructor (e.g. __init__() method) which automatically accepts keyword names that match the columns we’ve mapped. We are free to define any explicit __init__() method we prefer on our class, which will override the default method provided by Declarative.
 
-import cmd, sys
-from turtle import *
+Even though we didn’t specify it in the constructor, the id attribute still produces a value of None when we access it (as opposed to Python’s usual behavior of raising AttributeError for an undefined attribute). SQLAlchemy’s instrumentation normally produces this default value for column-mapped attributes when first accessed. For those attributes where we’ve actually assigned a value, the instrumentation system is tracking those assignments for use within an eventual INSERT statement to be emitted to the database.
 
-class TurtleShell(cmd.Cmd):
-    intro = 'Welcome to the turtle shell.   Type help or ? to list commands.\n'
-    prompt = '(turtle) '
-    file = None
+Creating a Session
+We’re now ready to start talking to the database. The ORM’s “handle” to the database is the Session. When we first set up the application, at the same level as our create_engine() statement, we define a Session class which will serve as a factory for new Session objects:
 
-    # ----- basic turtle commands -----
-    def do_forward(self, arg):
-        'Move the turtle forward by the specified distance:  FORWARD 10'
-        forward(*parse(arg))
-    def do_right(self, arg):
-        'Turn turtle right by given number of degrees:  RIGHT 20'
-        right(*parse(arg))
-    def do_left(self, arg):
-        'Turn turtle left by given number of degrees:  LEFT 90'
-        left(*parse(arg))
-    def do_goto(self, arg):
-        'Move turtle to an absolute position with changing orientation.  GOTO 100 200'
-        goto(*parse(arg))
-    def do_home(self, arg):
-        'Return turtle to the home position:  HOME'
-        home()
-    def do_circle(self, arg):
-        'Draw circle with given radius an options extent and steps:  CIRCLE 50'
-        circle(*parse(arg))
-    def do_position(self, arg):
-        'Print the current turtle position:  POSITION'
-        print('Current position is %d %d\n' % position())
-    def do_heading(self, arg):
-        'Print the current turtle heading in degrees:  HEADING'
-        print('Current heading is %d\n' % (heading(),))
-    def do_color(self, arg):
-        'Set the color:  COLOR BLUE'
-        color(arg.lower())
-    def do_undo(self, arg):
-        'Undo (repeatedly) the last turtle action(s):  UNDO'
-    def do_reset(self, arg):
-        'Clear the screen and return turtle to center:  RESET'
-        reset()
-    def do_bye(self, arg):
-        'Stop recording, close the turtle window, and exit:  BYE'
-        print('Thank you for using Turtle')
-        self.close()
-        bye()
-        return True
+>>> from sqlalchemy.orm import sessionmaker
+>>> Session = sessionmaker(bind=engine)
+In the case where your application does not yet have an Engine when you define your module-level objects, just set it up like this:
 
-    # ----- record and playback -----
-    def do_record(self, arg):
-        'Save future commands to filename:  RECORD rose.cmd'
-        self.file = open(arg, 'w')
-    def do_playback(self, arg):
-        'Playback commands from a file:  PLAYBACK rose.cmd'
-        self.close()
-        with open(arg) as f:
-            self.cmdqueue.extend(f.read().splitlines())
-    def precmd(self, line):
-        line = line.lower()
-        if self.file and 'playback' not in line:
-            print(line, file=self.file)
-        return line
-    def close(self):
-        if self.file:
-            self.file.close()
-            self.file = None
+>>> Session = sessionmaker()
+Later, when you create your engine with create_engine(), connect it to the Session using sessionmaker.configure():
 
-def parse(arg):
-    'Convert a series of zero or more numbers to an argument tuple'
-    return tuple(map(int, arg.split()))
+>>> Session.configure(bind=engine)  # once engine is available
+Session Lifecycle Patterns
 
-if __name__ == '__main__':
-    TurtleShell().cmdloop()
-Here is a sample session with the turtle shell showing the help functions, using blank lines to repeat commands, and the simple record and playback facility:
+The question of when to make a Session depends a lot on what kind of application is being built. Keep in mind, the Session is just a workspace for your objects, local to a particular database connection - if you think of an application thread as a guest at a dinner party, the Session is the guest’s plate and the objects it holds are the food (and the database…the kitchen?)! More on this topic available at When do I construct a Session, when do I commit it, and when do I close it?.
 
-Welcome to the turtle shell.   Type help or ? to list commands.
+This custom-made Session class will create new Session objects which are bound to our database. Other transactional characteristics may be defined when calling sessionmaker as well; these are described in a later chapter. Then, whenever you need to have a conversation with the database, you instantiate a Session:
 
-(turtle) ?
+>>> session = Session()
+The above Session is associated with our SQLite-enabled Engine, but it hasn’t opened any connections yet. When it’s first used, it retrieves a connection from a pool of connections maintained by the Engine, and holds onto it until we commit all changes and/or close the session object.
 
-Documented commands (type help <topic>):
-========================================
-bye     color    goto     home  playback  record  right
-circle  forward  heading  left  position  reset   undo
+Adding and Updating Objects
+To persist our User object, we Session.add() it to our Session:
 
-(turtle) help forward
-Move the turtle forward by the specified distance:  FORWARD 10
-(turtle) record spiral.cmd
-(turtle) position
-Current position is 0 0
+>>> ed_user = User(name='ed', fullname='Ed Jones', nickname='edsnickname')
+>>> session.add(ed_user)
+At this point, we say that the instance is pending; no SQL has yet been issued and the object is not yet represented by a row in the database. The Session will issue the SQL to persist Ed Jones as soon as is needed, using a process known as a flush. If we query the database for Ed Jones, all pending information will first be flushed, and the query is issued immediately thereafter.
 
-(turtle) heading
-Current heading is 0
+For example, below we create a new Query object which loads instances of User. We “filter by” the name attribute of ed, and indicate that we’d like only the first result in the full list of rows. A User instance is returned which is equivalent to that which we’ve added:
 
-(turtle) reset
-(turtle) circle 20
-(turtle) right 30
-(turtle) circle 40
-(turtle) right 30
-(turtle) circle 60
-(turtle) right 30
-(turtle) circle 80
-(turtle) right 30
-(turtle) circle 100
-(turtle) right 30
-(turtle) circle 120
-(turtle) right 30
-(turtle) circle 120
-(turtle) heading
-Current heading is 180
+>>> our_user = session.query(User).filter_by(name='ed').first() 
+BEGIN (implicit)
+INSERT INTO users (name, fullname, nickname) VALUES (?, ?, ?)
+('ed', 'Ed Jones', 'edsnickname')
+SELECT users.id AS users_id,
+        users.name AS users_name,
+        users.fullname AS users_fullname,
+        users.nickname AS users_nickname
+FROM users
+WHERE users.name = ?
+ LIMIT ? OFFSET ?
+('ed', 1, 0)
+>>> our_user
+<User(name='ed', fullname='Ed Jones', nickname='edsnickname')>
+In fact, the Session has identified that the row returned is the same row as one already represented within its internal map of objects, so we actually got back the identical instance as that which we just added:
 
-(turtle) forward 100
-(turtle)
-(turtle) right 90
-(turtle) forward 100
-(turtle)
-(turtle) right 90
-(turtle) forward 400
-(turtle) right 90
-(turtle) forward 500
-(turtle) right 90
-(turtle) forward 400
-(turtle) right 90
-(turtle) forward 300
-(turtle) playback spiral.cmd
-Current position is 0 0
+>>> ed_user is our_user
+True
+The ORM concept at work here is known as an identity map and ensures that all operations upon a particular row within a Session operate upon the same set of data. Once an object with a particular primary key is present in the Session, all SQL queries on that Session will always return the same Python object for that particular primary key; it also will raise an error if an attempt is made to place a second, already-persisted object with the same primary key within the session.
 
-Current heading is 0
+We can add more User objects at once using add_all():
 
-Current heading is 180
+>>> session.add_all([
+...     User(name='wendy', fullname='Wendy Williams', nickname='windy'),
+...     User(name='mary', fullname='Mary Contrary', nickname='mary'),
+...     User(name='fred', fullname='Fred Flintstone', nickname='freddy')])
+Also, we’ve decided Ed’s nickname isn’t that great, so lets change it:
 
-(turtle) bye
-Thank you for using Turtle
-© Copyright 2001-2023, Python Software Foundation.
-This page is licensed under the Python Software Foundation License Version 2.
-Examples, recipes, and other code in the documentation are additionally licensed under the Zero Clause BSD License.
+>>> ed_user.nickname = 'eddie'
+The Session is paying attention. It knows, for example, that Ed Jones has been modified:
 
-The Python Software Foundation is a non-profit corporation. Please donate.
+>>> session.dirty
+IdentitySet([<User(name='ed', fullname='Ed Jones', nickname='eddie')>])
+and that three new User objects are pending:
 
-Last updated on Feb 09, 2023. Found a bug?
-Created using Sphinx 2.4.4.
+>>> session.new  
+IdentitySet([<User(name='wendy', fullname='Wendy Williams', nickname='windy')>,
+<User(name='mary', fullname='Mary Contrary', nickname='mary')>,
+<User(name='fred', fullname='Fred Flintstone', nickname='freddy')>])
+We tell the Session that we’d like to issue all remaining changes to the database and commit the transaction, which has been in progress throughout. We do this via Session.commit(). The Session emits the UPDATE statement for the nickname change on “ed”, as well as INSERT statements for the three new User objects we’ve added:
+
+>>> session.commit()
+UPDATE users SET nickname=? WHERE users.id = ?
+('eddie', 1)
+INSERT INTO users (name, fullname, nickname) VALUES (?, ?, ?)
+('wendy', 'Wendy Williams', 'windy')
+INSERT INTO users (name, fullname, nickname) VALUES (?, ?, ?)
+('mary', 'Mary Contrary', 'mary')
+INSERT INTO users (name, fullname, nickname) VALUES (?, ?, ?)
+('fred', 'Fred Flintstone', 'freddy')
+COMMIT
+Session.commit() flushes the remaining changes to the database, and commits the transaction. The connection resources referenced by the session are now returned to the connection pool. Subsequent operations with this session will occur in a new transaction, which will again re-acquire connection resources when first needed.
+
+If we look at Ed’s id attribute, which earlier was None, it now has a value:
+
+>>> ed_user.id 
+BEGIN (implicit)
+SELECT users.id AS users_id,
+        users.name AS users_name,
+        users.fullname AS users_fullname,
+        users.nickname AS users_nickname
+FROM users
+WHERE users.id = ?
+(1,)
+1
+After the Session inserts new rows in the database, all newly generated identifiers and database-generated defaults become available on the instance, either immediately or via load-on-first-access. In this case, the entire row was re-loaded on access because a new transaction was begun after we issued Session.commit(). SQLAlchemy by default refreshes data from a previous transaction the first time it’s accessed within a new transaction, so that the most recent state is available. The level of reloading is configurable as is described in Using the Session.
